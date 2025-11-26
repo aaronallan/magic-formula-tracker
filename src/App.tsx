@@ -12,7 +12,7 @@ function App() {
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
             <div className="flex h-10 w-8 items-center justify-center overflow-hidden rounded shadow-sm">
-              <img src="/book-cover.jpg" alt="The Little Book That Beats the Market" className="h-full w-full object-cover" />
+              <img src={`${import.meta.env.BASE_URL}book-cover.jpg`} alt="The Little Book That Beats the Market" className="h-full w-full object-cover" />
             </div>
             <h1 className="text-lg font-semibold tracking-tight">Magic Formula Tracker</h1>
           </div>

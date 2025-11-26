@@ -13,7 +13,7 @@ export const Strategy: React.FC = () => {
             <section className="rounded-lg bg-emerald-50 p-6 border border-emerald-100">
                 <div className="flex gap-4 items-start">
                     <div className="hidden sm:block h-24 w-16 flex-shrink-0 overflow-hidden rounded shadow-sm">
-                        <img src="/book-cover.jpg" alt="Book Cover" className="h-full w-full object-cover" />
+                        <img src={`${import.meta.env.BASE_URL}book-cover.jpg`} alt="Book Cover" className="h-full w-full object-cover" />
                     </div>
                     <div>
                         <h3 className="text-lg font-medium text-emerald-900 mb-2">About the Strategy</h3>

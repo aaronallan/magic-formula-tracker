@@ -11,7 +11,7 @@ export function usePerformanceData() {
         async function fetchData() {
             try {
                 // 1. Fetch S&P 500 CSV
-                const response = await fetch('/sp500.csv');
+                const response = await fetch(`${import.meta.env.BASE_URL}sp500.csv`);
                 if (!response.ok) throw new Error('Failed to fetch S&P 500 data');
                 const text = await response.text();
 
