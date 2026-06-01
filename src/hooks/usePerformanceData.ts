@@ -2,147 +2,145 @@ import { useState, useEffect } from 'react';
 import { POSITIONS } from '../data';
 import type { PerformancePoint } from '../data';
 
+const CACHE_KEY = 'sp500_data_v2';
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface CachedSp500 {
+    fetchedAt: number;
+    entries: [string, number][];
+}
+
+async function fetchSp500FromYahoo(startDate: Date, endDate: Date): Promise<Map<string, number>> {
+    const period1 = Math.floor(startDate.getTime() / 1000);
+    const period2 = Math.floor(endDate.getTime() / 1000);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&period1=${period1}&period2=${period2}`;
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
+
+    const json = await response.json();
+    const result = json.chart?.result?.[0];
+    if (!result) throw new Error('Unexpected Yahoo Finance response shape');
+
+    const timestamps: number[] = result.timestamp;
+    const closes: (number | null)[] = result.indicators.quote[0].close;
+
+    const map = new Map<string, number>();
+    timestamps.forEach((ts, i) => {
+        const close = closes[i];
+        if (close != null) {
+            map.set(new Date(ts * 1000).toISOString().split('T')[0], close);
+        }
+    });
+    return map;
+}
+
+async function loadSp500(startDate: Date, endDate: Date): Promise<Map<string, number>> {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+        const parsed: CachedSp500 = JSON.parse(cached);
+        if (Date.now() - parsed.fetchedAt < CACHE_TTL_MS) {
+            return new Map(parsed.entries);
+        }
+    }
+
+    try {
+        const map = await fetchSp500FromYahoo(startDate, endDate);
+        const toCache: CachedSp500 = { fetchedAt: Date.now(), entries: [...map.entries()] };
+        localStorage.setItem(CACHE_KEY, JSON.stringify(toCache));
+        return map;
+    } catch (err) {
+        console.warn('Yahoo Finance unavailable, falling back to bundled sp500.csv:', err);
+    }
+
+    const resp = await fetch(`${import.meta.env.BASE_URL}sp500.csv`);
+    if (!resp.ok) throw new Error('S&P 500 data unavailable');
+    const text = await resp.text();
+    const map = new Map<string, number>();
+    let lastVal = 0;
+    text.split('\n').slice(1).forEach(line => {
+        const [date, valStr] = line.trim().split(',');
+        if (!date) return;
+        const val = parseFloat(valStr);
+        lastVal = isNaN(val) ? lastVal : val;
+        if (lastVal > 0) map.set(date, lastVal);
+    });
+    return map;
+}
+
 export function usePerformanceData() {
     const [data, setData] = useState<PerformancePoint[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        async function fetchData() {
+        async function build() {
             try {
-                // 1. Fetch S&P 500 CSV
-                const response = await fetch(`${import.meta.env.BASE_URL}sp500.csv`);
-                if (!response.ok) throw new Error('Failed to fetch S&P 500 data');
-                const text = await response.text();
+                const sorted = [...POSITIONS].sort((a, b) =>
+                    new Date(a.dateAcquired).getTime() - new Date(b.dateAcquired).getTime()
+                );
+                if (sorted.length === 0) { setData([]); setLoading(false); return; }
 
-                // 2. Parse CSV
-                const sp500Map = new Map<string, number>();
-                const lines = text.split('\n');
-                let lastValue = 0;
+                const startDate = new Date(sorted[0].dateAcquired);
+                const endDate = POSITIONS.reduce((max, p) => {
+                    const d = new Date(p.dateSold);
+                    return d > max ? d : max;
+                }, new Date(sorted[0].dateSold));
 
-                // Skip header
-                for (let i = 1; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-                    const [date, valueStr] = line.split(',');
+                const sp500Map = await loadSp500(startDate, endDate);
 
-                    let value = parseFloat(valueStr);
-                    if (isNaN(value)) {
-                        // Handle missing data ('.') by using last known value
-                        value = lastValue;
-                    } else {
-                        lastValue = value;
-                    }
-
-                    if (value > 0) {
-                        sp500Map.set(date, value);
-                    }
-                }
-
-                // 3. Calculate Performance
-                const sortedPositions = [...POSITIONS].sort((a, b) => new Date(a.dateAcquired).getTime() - new Date(b.dateAcquired).getTime());
-                if (sortedPositions.length === 0) {
-                    setData([]);
-                    setLoading(false);
-                    return;
-                }
-
-                const startDate = new Date(sortedPositions[0].dateAcquired);
-                // Use today as end date, or the last date in S&P data
-                const endDate = new Date("2025-11-24"); // Based on the file we saw
-
-                const chartData: PerformancePoint[] = [];
-                let currentDate = new Date(startDate);
-
-                // Find S&P 500 start value
-                // If start date is a weekend/holiday, look forward a few days
+                // Find S&P 500 value at start, skipping market holidays/weekends
                 let sp500StartValue = 0;
-                let tempDate = new Date(startDate);
-                while (sp500StartValue === 0 && tempDate <= endDate) {
-                    const dateStr = tempDate.toISOString().split('T')[0];
-                    if (sp500Map.has(dateStr)) {
-                        sp500StartValue = sp500Map.get(dateStr)!;
-                    }
-                    tempDate.setDate(tempDate.getDate() + 1);
+                const probe = new Date(startDate);
+                while (sp500StartValue === 0 && probe <= endDate) {
+                    sp500StartValue = sp500Map.get(probe.toISOString().split('T')[0]) ?? 0;
+                    probe.setDate(probe.getDate() + 1);
                 }
 
-                let cumulativeRealizedPL = 0;
-                let cumulativeCostBasis = 0;
-
-                // Pre-process position events
-                const events: Record<string, { pl: number, costBasis: number }> = {};
+                // Aggregate realized P&L and cost basis by sold date
+                const events: Record<string, { pl: number; costBasis: number }> = {};
                 POSITIONS.forEach(pos => {
-                    const soldDate = pos.dateSold;
-                    const pl = (pos.longTermGainLoss || 0) + (pos.shortTermGainLoss || 0);
-
-                    if (!events[soldDate]) {
-                        events[soldDate] = { pl: 0, costBasis: 0 };
-                    }
-                    events[soldDate].pl += pl;
-                    events[soldDate].costBasis += pos.costBasis;
+                    const pl = (pos.longTermGainLoss ?? 0) + (pos.shortTermGainLoss ?? 0);
+                    if (!events[pos.dateSold]) events[pos.dateSold] = { pl: 0, costBasis: 0 };
+                    events[pos.dateSold].pl += pl;
+                    events[pos.dateSold].costBasis += pos.costBasis;
                 });
 
-                while (currentDate <= endDate) {
-                    const dateStr = currentDate.toISOString().split('T')[0];
+                let cumulativePL = 0;
+                let cumulativeCost = 0;
+                let lastKnownSp500 = sp500StartValue;
+                const chartData: PerformancePoint[] = [];
+                const current = new Date(startDate);
 
-                    // Update Portfolio Stats
+                while (current <= endDate) {
+                    const dateStr = current.toISOString().split('T')[0];
+
                     if (events[dateStr]) {
-                        cumulativeRealizedPL += events[dateStr].pl;
-                        cumulativeCostBasis += events[dateStr].costBasis;
+                        cumulativePL += events[dateStr].pl;
+                        cumulativeCost += events[dateStr].costBasis;
                     }
 
-                    // Calculate Portfolio Return %
-                    // Logic: Cumulative Realized P&L / Cumulative Cost Basis
-                    const portfolioReturn = cumulativeCostBasis > 0 ? (cumulativeRealizedPL / cumulativeCostBasis) * 100 : 0;
+                    const sp500Val = sp500Map.get(dateStr);
+                    if (sp500Val !== undefined) lastKnownSp500 = sp500Val;
 
-                    // Calculate S&P 500 Return %
-                    // Logic: (Current Value - Start Value) / Start Value
-                    // Note: sp500Return calculation moved to second pass
+                    const portfolioReturn = cumulativeCost > 0 ? (cumulativePL / cumulativeCost) * 100 : 0;
+                    const sp500Return = sp500StartValue > 0
+                        ? ((lastKnownSp500 - sp500StartValue) / sp500StartValue) * 100
+                        : 0;
 
-                    // Let's refine the loop
-                    // We need to handle the case where sp500StartValue is 0 (data missing at start)
-
-                    // ... (see implementation below)
-
-                    chartData.push({
-                        date: dateStr,
-                        portfolioValue: portfolioReturn,
-                        sp500Value: 0, // Placeholder
-                    });
-
-                    currentDate.setDate(currentDate.getDate() + 1);
+                    chartData.push({ date: dateStr, portfolioValue: portfolioReturn, sp500Value: sp500Return });
+                    current.setDate(current.getDate() + 1);
                 }
 
-                // Second pass to fill S&P values correctly with look-forward/back?
-                // Actually, let's just do it in one pass with a "last known" tracker.
-
-                let lastKnownSp500 = sp500StartValue;
-
-                const finalData = chartData.map(point => {
-                    const val = sp500Map.get(point.date);
-                    if (val !== undefined) {
-                        lastKnownSp500 = val;
-                    }
-
-                    const sp500Return = sp500StartValue > 0 ? ((lastKnownSp500 - sp500StartValue) / sp500StartValue) * 100 : 0;
-
-                    return {
-                        ...point,
-                        sp500Value: sp500Return
-                    };
-                });
-
-                setData(finalData);
+                setData(chartData);
                 setLoading(false);
-
             } catch (err) {
-                console.error(err);
                 setError(err instanceof Error ? err.message : 'Unknown error');
                 setLoading(false);
             }
         }
 
-        fetchData();
+        build();
     }, []);
 
     return { data, loading, error };

@@ -264,6 +264,62 @@ export const POSITIONS: Position[] = [
         shortTermGainLoss: null,
         longTermGainLoss: 2.89,
     },
+    // 2026-05-29 sells — proceeds from Fidelity history; costBasis and gain/loss need to be filled from purchase records
+    {
+        symbol: "ANF",
+        description: "ABERCROMBIE & FITCH CO CL A COM USD0.01",
+        dateAcquired: "2025-05-29",
+        dateSold: "2026-05-29",
+        quantity: 5,
+        costBasis: 512.21,
+        proceeds: 385.05,
+        shortTermGainLoss: null,
+        longTermGainLoss: -127.16,
+    },
+    {
+        symbol: "BKE",
+        description: "BUCKLE INC COM",
+        dateAcquired: "2025-05-29",
+        dateSold: "2026-05-29",
+        quantity: 12.912,
+        costBasis: 499.98,
+        proceeds: 597.68,
+        shortTermGainLoss: null,
+        longTermGainLoss: 97.70,
+    },
+    {
+        symbol: "BMBL",
+        description: "BUMBLE INC COM CL A",
+        dateAcquired: "2025-05-29",
+        dateSold: "2026-05-29",
+        quantity: 101.419,
+        costBasis: 500.00,
+        proceeds: 325.59,
+        shortTermGainLoss: null,
+        longTermGainLoss: -174.41,
+    },
+    {
+        symbol: "PLTK",
+        description: "PLAYTIKA HLDG CORP COM",
+        dateAcquired: "2025-05-29",
+        dateSold: "2026-05-29",
+        quantity: 97.971,
+        costBasis: 500.00,
+        proceeds: 370.33,
+        shortTermGainLoss: null,
+        longTermGainLoss: -129.67,
+    },
+    {
+        symbol: "VYGR",
+        description: "VOYAGER THERAPEUTICS INC COM",
+        dateAcquired: "2025-05-29",
+        dateSold: "2026-05-29",
+        quantity: 127.551,
+        costBasis: 500.00,
+        proceeds: 496.17,
+        shortTermGainLoss: null,
+        longTermGainLoss: -3.83,
+    },
 ];
 
 export interface PerformancePoint {
@@ -323,7 +379,7 @@ export function getPerformanceData(): PerformancePoint[] {
     if (sortedPositions.length === 0) return [];
 
     const startDate = new Date(sortedPositions[0].dateAcquired);
-    const endDate = new Date("2025-11-10"); // Max date in data
+    const endDate = new Date("2026-05-29"); // Max date in data
 
     const data: PerformancePoint[] = [];
     let currentDate = new Date(startDate);
